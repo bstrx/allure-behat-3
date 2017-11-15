@@ -15,15 +15,15 @@ use Behat\Gherkin\Node\FeatureNode;
 use Behat\Gherkin\Node\OutlineNode;
 use Behat\Gherkin\Node\ScenarioInterface;
 use Behat\Gherkin\Node\ScenarioNode;
-use Behat\Testwork\Counter\Timer;
-use Behat\Testwork\EventDispatcher\Event\AfterExerciseCompleted;
 use Behat\Testwork\EventDispatcher\Event\AfterSuiteTested;
+use Behat\Testwork\EventDispatcher\Event\AfterTested;
 use Behat\Testwork\EventDispatcher\Event\BeforeExerciseCompleted;
 use Behat\Testwork\EventDispatcher\Event\BeforeSuiteTested;
+use Behat\Testwork\EventDispatcher\Event\ExerciseCompleted;
+use Behat\Testwork\Exception\ExceptionPresenter;
 use Behat\Testwork\Output\Formatter;
 use Behat\Testwork\Output\Printer\OutputPrinter;
 use Behat\Testwork\Tester\Result\ExceptionResult;
-use Doctrine\Common\Annotations\AnnotationRegistry;
 use Symfony\Component\DependencyInjection\ParameterBag\ParameterBag;
 use Yandex\Allure\Adapter\Allure;
 use Yandex\Allure\Adapter\Annotation\AnnotationManager;
@@ -34,6 +34,7 @@ use Yandex\Allure\Adapter\Annotation\Issues;
 use Yandex\Allure\Adapter\Annotation\Parameter;
 use Yandex\Allure\Adapter\Annotation\Stories;
 use Yandex\Allure\Adapter\Annotation\TestCaseId;
+use Yandex\Allure\Adapter\Event\AddAttachmentEvent;
 use Yandex\Allure\Adapter\Event\StepCanceledEvent;
 use Yandex\Allure\Adapter\Event\StepFailedEvent;
 use Yandex\Allure\Adapter\Event\StepFinishedEvent;
@@ -48,55 +49,73 @@ use Yandex\Allure\Adapter\Event\TestSuiteFinishedEvent;
 use Yandex\Allure\Adapter\Event\TestSuiteStartedEvent;
 use Yandex\Allure\Adapter\Model\DescriptionType;
 use Yandex\Allure\Adapter\Model\Provider;
+use \Exception;
 
 use DateTime;
 
 class Behat3AllureFormatter implements Formatter
 {
-    protected $output;
+    /**
+     * @var string formatter's name
+     */
     protected $name;
-    protected $base_path;
-    protected $timer;
+
+    /**
+     * @var string path to behat's config dir
+     */
+    protected $basePath;
+
+    /**
+     * @var Exception
+     */
     protected $exception;
+
+    /**
+     * @var string
+     */
     protected $uuid;
-    protected $issue_tag_prefix;
+
+    /**
+     * @var string
+     */
+    protected $issueTagPrefix;
+
+    /**
+     * @var array|null
+     */
     protected $ignoredTags;
+
+    /**
+     * @var ParameterBag
+     */
     protected $parameters;
+
+    /**
+     * @var Printer
+     */
     protected $printer;
-    /** @var  \Behat\Testwork\Exception\ExceptionPresenter */
+
+    /**
+     * @var ExceptionPresenter
+     */
     protected $presenter;
 
-    /** @var  Allure */
-    private $lifecycle;
-
     /**
-     * @param $name
-     * @param $issue_tag_prefix
-     * @param $ignoredTags
-     * @param $base_path
-     * @param $presenter
+     * @param string $name
+     * @param string $issueTagPrefix
+     * @param array|null $ignoredTags
+     * @param string $basePath
+     * @param ExceptionPresenter $presenter
      */
-    public function __construct($name, $issue_tag_prefix, $ignoredTags, $base_path, $presenter)
+    public function __construct($name, $issueTagPrefix = null, array $ignoredTags = null, $basePath, ExceptionPresenter $presenter)
     {
         $this->name = $name;
-        $this->issue_tag_prefix = $issue_tag_prefix;
+        $this->issueTagPrefix = $issueTagPrefix;
         $this->ignoredTags = $ignoredTags;
-        $this->base_path = $base_path;
+        $this->basePath = $basePath;
         $this->presenter = $presenter;
-        $this->timer = new Timer();
         $this->printer = new Printer();
         $this->parameters = new ParameterBag();
-    }
-
-    /**
-     * @return Allure
-     */
-    private function getLifeCycle()
-    {
-        if (!isset($this->lifecycle)) {
-            $this->lifecycle = Allure::lifecycle();
-        }
-        return $this->lifecycle;
     }
 
     /**
@@ -198,9 +217,9 @@ class Behat3AllureFormatter implements Formatter
     }
 
     /**
-     * @param AfterExerciseCompleted $event
+     * @param ExerciseCompleted $event
      */
-    public function onAfterExerciseCompleted(AfterExerciseCompleted $event)
+    public function onAfterExerciseCompleted(ExerciseCompleted $event)
     {
 
     }
@@ -215,11 +234,10 @@ class Behat3AllureFormatter implements Formatter
             $this->printer->getOutputPath()
         );
         $now = new DateTime();
-        $start_event = new TestSuiteStartedEvent(sprintf('TestSuite-%s', $now->format('Y-m-d_His')));
+        $startedEvent = new TestSuiteStartedEvent(sprintf('TestSuite-%s', $now->format('Y-m-d_His')));
+        $this->uuid = $startedEvent->getUuid();
 
-        $this->uuid = $start_event->getUuid();
-
-        $this->getLifeCycle()->fire($start_event);
+        Allure::lifecycle()->fire($startedEvent);
     }
 
     /**
@@ -228,8 +246,7 @@ class Behat3AllureFormatter implements Formatter
     public function onAfterSuiteTested(AfterSuiteTested $event)
     {
         AnnotationProvider::registerAnnotationNamespaces();
-        $this->getLifeCycle()->fire(new TestSuiteFinishedEvent($this->uuid));
-
+        Allure::lifecycle()->fire(new TestSuiteFinishedEvent($this->uuid));
     }
 
     /**
@@ -258,7 +275,6 @@ class Behat3AllureFormatter implements Formatter
         /** @var \Behat\Gherkin\Node\FeatureNode $feature */
         $feature = $event->getFeature();
 
-
         $annotations = array_merge(
             $this->parseFeatureAnnotations($feature),
             $this->parseScenarioAnnotations($scenario)
@@ -269,7 +285,7 @@ class Behat3AllureFormatter implements Formatter
         $scenarioEvent = new TestCaseStartedEvent($this->uuid, $scenarioName);
         $annotationManager->updateTestCaseEvent($scenarioEvent);
 
-        $this->getLifeCycle()->fire($scenarioEvent->withTitle($scenario->getTitle()));
+        Allure::lifecycle()->fire($scenarioEvent->withTitle($scenario->getTitle()));
     }
 
     /**
@@ -277,7 +293,7 @@ class Behat3AllureFormatter implements Formatter
      */
     public function onAfterScenarioTested(AfterScenarioTested $event)
     {
-        $this->processScenarioResult($event->getTestResult());
+        $this->processScenarioResult($event);
     }
 
     /**
@@ -306,7 +322,7 @@ class Behat3AllureFormatter implements Formatter
         );
         $annotationManager = new AnnotationManager($annotations);
         $annotationManager->updateTestCaseEvent($scenarioEvent);
-        $this->getLifeCycle()->fire($scenarioEvent->withTitle($outline->getTitle()));
+        Allure::lifecycle()->fire($scenarioEvent->withTitle($outline->getTitle()));
     }
 
     /**
@@ -314,7 +330,7 @@ class Behat3AllureFormatter implements Formatter
      */
     public function onAfterOutlineTested(AfterOutlineTested $event)
     {
-        $this->processScenarioResult($event->getTestResult());
+        $this->processScenarioResult($event);
     }
 
     /**
@@ -326,7 +342,7 @@ class Behat3AllureFormatter implements Formatter
         $stepEvent = new StepStartedEvent($step->getText());
         $stepEvent->withTitle(sprintf('%s %s', $step->getType(), $step->getText()));
 
-        $this->getLifeCycle()->fire($stepEvent);
+        Allure::lifecycle()->fire($stepEvent);
     }
 
     /**
@@ -353,7 +369,6 @@ class Behat3AllureFormatter implements Formatter
             default:
                 $this->exception = null;
         }
-        $this->addFinishedStep();
     }
 
     /**
@@ -409,8 +424,8 @@ class Behat3AllureFormatter implements Formatter
             $ignoredTags = $ignoredTags;
         }
         foreach ($scenarioNode->getTags() as $tag) {
-            if ($this->issue_tag_prefix) {
-                if (stripos($tag, $this->issue_tag_prefix) === 0) {
+            if ($this->issueTagPrefix) {
+                if (stripos($tag, $this->issueTagPrefix) === 0) {
                     $issues->issueKeys[] = $tag;
                     continue;
                 }
@@ -435,15 +450,16 @@ class Behat3AllureFormatter implements Formatter
     /**
      * @param $result
      */
-    protected function processScenarioResult($result)
+    protected function processScenarioResult(AfterTested $event)
     {
-
+        $result = $event->getTestResult();
         if ($result instanceof ExceptionResult && $result->hasException()) {
             $this->exception = $result->getException();
         }
 
         switch ($result->getResultCode()) {
             case StepResult::FAILED:
+                $this->addTestCaseAttachment($event);
                 $this->addTestCaseFailed();
                 break;
             case StepResult::UNDEFINED:
@@ -483,39 +499,71 @@ class Behat3AllureFormatter implements Formatter
         return $parameters;
     }
 
+    /**
+     * @param AfterTested $event
+     */
+    private function addTestCaseAttachment(AfterTested $event)
+    {
+        if (!$event instanceof AfterOutlineTested && !$event instanceof AfterScenarioTested) {
+            return;
+        }
+
+        $caption = 'Failed step screenshot';
+        $feature = $event->getFeature()->getTitle();
+
+        //TODO highly depends on hardcoded route for screenshots on client and uses basePath which is a behat.yml location
+        $featureScreenshotsDir = $this->basePath . '/../../tmp/selenium-screenshots/' . $feature;
+        $files = scandir($featureScreenshotsDir);
+        if (!$files) {
+            return;
+        }
+
+        foreach ($files as $fileName) {
+            $nameParts = explode('.', $fileName);
+            if (end($nameParts) === 'png') {
+                $filePath = sprintf('%s/%s', $featureScreenshotsDir, $fileName);
+
+                Allure::lifecycle()->fire(new AddAttachmentEvent(
+                    $filePath,
+                    $caption
+                ));
+            }
+        }
+    }
+
     private function addCancelledStep()
     {
-        $this->getLifeCycle()->fire(new StepCanceledEvent());
+        Allure::lifecycle()->fire(new StepCanceledEvent());
     }
 
     private function addFinishedStep()
     {
-        $this->getLifeCycle()->fire(new StepFinishedEvent());
+        Allure::lifecycle()->fire(new StepFinishedEvent());
     }
 
     private function addFailedStep()
     {
-        $this->getLifeCycle()->fire(new StepFailedEvent());
+        Allure::lifecycle()->fire(new StepFailedEvent());
     }
 
     private function addTestCaseFinished()
     {
-        $this->getLifeCycle()->fire(new TestCaseFinishedEvent());
+        Allure::lifecycle()->fire(new TestCaseFinishedEvent());
     }
 
     private function addTestCaseCancelled()
     {
-        $this->getLifeCycle()->fire(new TestCaseCanceledEvent());
+        Allure::lifecycle()->fire(new TestCaseCanceledEvent());
     }
 
     private function addTestCasePending()
     {
-        $this->getLifeCycle()->fire(new TestCasePendingEvent());
+        Allure::lifecycle()->fire(new TestCasePendingEvent());
     }
 
     private function addTestCaseBroken()
     {
-        $this->getLifeCycle()->fire($event = new TestCaseBrokenEvent());
+        Allure::lifecycle()->fire($event = new TestCaseBrokenEvent());
     }
 
     private function addTestCaseFailed()
@@ -523,6 +571,6 @@ class Behat3AllureFormatter implements Formatter
         $event = new TestCaseFailedEvent();
         $event->withException($this->exception)
             ->withMessage($this->exception->getMessage());
-        $this->getLifeCycle()->fire($event);
+        Allure::lifecycle()->fire($event);
     }
 }
