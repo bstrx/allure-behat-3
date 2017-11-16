@@ -513,6 +513,10 @@ class Behat3AllureFormatter implements Formatter
 
         //TODO highly depends on hardcoded route for screenshots on client and uses basePath which is a behat.yml location
         $featureScreenshotsDir = $this->basePath . '/../../tmp/selenium-screenshots/' . $feature;
+        if (!file_exists($featureScreenshotsDir)) {
+            return;
+        }
+
         $files = scandir($featureScreenshotsDir);
         if (!$files) {
             return;
