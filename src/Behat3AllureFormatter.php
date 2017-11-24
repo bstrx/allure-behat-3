@@ -369,6 +369,8 @@ class Behat3AllureFormatter implements Formatter
             default:
                 $this->exception = null;
         }
+
+        $this->addFinishedStep();
     }
 
     /**
@@ -517,21 +519,19 @@ class Behat3AllureFormatter implements Formatter
             return;
         }
 
-        $files = scandir($featureScreenshotsDir);
-        if (!$files) {
-            return;
-        }
+        $fileName = preg_replace(
+                '/[^\-\.\w]/',
+                '_',
+                $event->getScenario()->getTitle()
+            ) . '.png';
 
-        foreach ($files as $fileName) {
-            $nameParts = explode('.', $fileName);
-            if (end($nameParts) === 'png') {
-                $filePath = sprintf('%s/%s', $featureScreenshotsDir, $fileName);
+        $filePath = sprintf('%s/%s', $featureScreenshotsDir, $fileName);
 
-                Allure::lifecycle()->fire(new AddAttachmentEvent(
-                    $filePath,
-                    $caption
-                ));
-            }
+        if (file_exists($filePath)) {
+            Allure::lifecycle()->fire(new AddAttachmentEvent(
+                $filePath,
+                $caption
+            ));
         }
     }
 
