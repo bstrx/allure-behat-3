@@ -511,10 +511,10 @@ class Behat3AllureFormatter implements Formatter
         }
 
         $caption = 'Failed step screenshot';
-        $feature = $event->getFeature()->getTitle();
-
+        $feature = $event->getFeature()->getFile();
+        $feature = substr(strrchr($feature, '/'), 1);
         //TODO highly depends on hardcoded route for screenshots on client and uses basePath which is a behat.yml location
-        $featureScreenshotsDir = $this->basePath . '/../../tmp/selenium-screenshots/' . $feature;
+        $featureScreenshotsDir = sprintf('%s/build/screenshots/%s/%s', $this->basePath, date('Ymd'), $feature);
         if (!file_exists($featureScreenshotsDir)) {
             return;
         }
@@ -526,7 +526,6 @@ class Behat3AllureFormatter implements Formatter
             ) . '.png';
 
         $filePath = sprintf('%s/%s', $featureScreenshotsDir, $fileName);
-
         if (file_exists($filePath)) {
             Allure::lifecycle()->fire(new AddAttachmentEvent(
                 $filePath,
